@@ -35,13 +35,73 @@ LOG = pathlib.Path("reports/failover-events.jsonl")
 
 
 def emit(**kw):
-    """TODO: append 1 dòng JSONL có ts + iso vào LOG, và print ra stdout."""
-    raise NotImplementedError
+    """Append một sự kiện có timestamp vào log và stdout."""
+    rec = {"ts": time.time(),
+           "iso": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()), **kw}
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with LOG.open("a") as log:
+        log.write(json.dumps(rec) + "\n")
+    print("FAILOVER", json.dumps(rec))
 
 
 def failover(target: str, backend: str, wait: float) -> dict:
-    """TODO: 5 bước ở trên, đúng thứ tự."""
-    raise NotImplementedError
+    """Chuẩn bị target và chỉ cutover sau khi readiness thành công."""
+    if target not in URL or backend not in {"fs", "minio"} or wait <= 0:
+        raise ValueError("Region, backend hoặc thời gian chờ không hợp lệ")
+
+    step = "1_verify_target"
+    try:
+        response = httpx.get(f"{URL[target]}/v1/state", timeout=2.0)
+        response.raise_for_status()
+        state = response.json()
+        emit(step=step, target=target, ok=True, state=state)
+
+        step = "2_restore_snapshot"
+        meta = snapshot.get(target, backend)
+        primary = "a" if target == "b" else "b"
+        metrics = snapshot.rpo(
+            pathlib.Path(f"state/region-{primary}/vectors.sqlite"),
+            pathlib.Path(f"state/region-{target}/vectors.sqlite"),
+        )
+        emit(step=step, target=target, ok=True, **meta, **metrics)
+
+        step = "3_scale_pool"
+        pathlib.Path(f"state/region-{target}/pool_state").write_text("full")
+        emit(step=step, target=target, ok=True, pool_state="full")
+
+        step = "4_wait_ready"
+        deadline = time.monotonic() + wait
+        reason = "readiness_timeout"
+        ready = None
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                response = httpx.get(f"{URL[target]}/readyz",
+                                     timeout=min(2.0, remaining))
+                reason = f"HTTP {response.status_code}"
+                if response.status_code == 200:
+                    ready = response.json()
+                    break
+            except httpx.RequestError as exc:
+                reason = type(exc).__name__
+            time.sleep(max(0.0, min(0.5, deadline - time.monotonic())))
+        if ready is None:
+            raise TimeoutError(reason)
+        state = {"region": target, "pool_state": ready["pool_state"],
+                 "weights": True, **ready["vectors"]}
+        emit(step=step, target=target, ok=True, state=ready)
+
+        step = "5_dns_cutover"
+        pathlib.Path("edge/active_region").write_text(target)
+        emit(step=step, target=target, ok=True)
+        return {"ok": True, "target": target, "cutover": True,
+                "state": state, **meta, **metrics}
+    except (Exception, SystemExit) as exc:
+        emit(step=step, target=target, ok=False, error=str(exc))
+        return {"ok": False, "target": target, "cutover": False,
+                "step": step, "error": str(exc)}
 
 
 if __name__ == "__main__":

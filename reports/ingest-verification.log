@@ -1,0 +1,18 @@
+workspace: /mnt/d/VinUni/DAY23-HoangPhong-02943-DisaterRecovery4AIInfrastructure/state/_replica/ingest-check-lh8cc9ji
+scenario: isolated SQLite on /mnt/d; original scripts; concurrent ingest, fs replication and direct inference traffic
+ingest parameters: region=a rate=0.5 duration=150
+serving SIGSTOP: +20s; SIGCONT: +40s
+ingest exit code: 0
+replication exit code: 0
+traffic exit code: 0
+ingest elapsed seconds: 146.343
+ingest elapsed wall-clock seconds (same clock as script): 151.613
+new documents: 73
+first-to-last document span seconds: 149.311
+replication cycles: 5
+traffic requests: 255
+traffic failed requests: 6
+SQLite integrity_check: ok
+result: PASS
+ingest stdout/stderr:
+ingested 73 live docs vào region-a
